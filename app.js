@@ -1,29 +1,430 @@
-// Easy Locker: el servidor es la fuente de verdad; nunca guardamos contraseñas en localStorage.
-const $=id=>document.getElementById(id);
-const message=(id,text)=>{const el=$(id);if(el)el.textContent=text;};
-async function api(url,options={}){const response=await fetch(url,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const data=await response.json();if(!response.ok)throw new Error(data.mensaje||'No se pudo completar la operación.');return data;}
-const send=(url,data,method='POST')=>api(url,{method,body:JSON.stringify(data)});
-const text=(id,value)=>{if($(id))$(id).textContent=value??'—';};
-const field=id=>$(id)?.value?.trim()||'';
-const escapeText=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const urlPage=window.location.pathname.toLowerCase();
-const privatePages=['/cuenta.html','/datos.html','/historial.html','/pago.html','/casilleros.html','/planes.html'];
-let currentUser=null;
-async function getUser(){try{currentUser=await api('/api/yo');return currentUser;}catch{return null;}}
-function setupNav(){const btn=$('botonMenu'),nav=$('navegacion');if(btn&&nav)btn.addEventListener('click',()=>nav.classList.toggle('abierto'));const menu=nav||document.querySelector('header');if(menu){const a=document.createElement('a');a.href='login.html';a.id='navSesion';a.textContent='Iniciar sesión';menu.appendChild(a);a.addEventListener('click',async e=>{if(!currentUser)return;e.preventDefault();await send('/api/logout',{});location.href='login.html';});}}
-async function init(){setupNav();const user=await getUser();const nav=$('navSesion');if(nav)nav.textContent=user?'Cerrar sesión':'Iniciar sesión';if(privatePages.includes(urlPage)&&!user){location.href='login.html?volver='+encodeURIComponent(location.pathname);return;}
-if($('formRegistro'))setupRegistro();if($('formLogin'))setupLogin();if($('formDatos')&&!$('cuentaNombre'))setupDatos();if($('cuentaNombre'))setupCuenta();if($('filasCasilleros'))setupCasilleros();if(document.querySelector('.boton-plan'))setupPlanes();if($('formPago'))setupPago();if($('tablaHistorial'))setupHistorial();if($('adminResumen'))setupAdmin();}
-function setupRegistro(){$('formRegistro').addEventListener('submit',async e=>{e.preventDefault();const data={nombre:field('nombre'),apellidos:field('apellidos'),matricula:field('matricula'),correo:field('correo'),facultad:field('facultad'),contrasena:$('contrasena').value};if(data.contrasena!==$('confirmar').value)return message('mensajeRegistro','Las contraseñas no coinciden.');try{const r=await send('/api/registro',data);message('mensajeRegistro',r.mensaje);setTimeout(()=>location.href='login.html',1000);}catch(err){message('mensajeRegistro',err.message);}});}
-function setupLogin(){$('formLogin').addEventListener('submit',async e=>{e.preventDefault();try{await send('/api/login',{correo:field('loginCorreo'),contrasena:$('loginContrasena').value});message('mensajeLogin','¡Bienvenido!');const back=new URLSearchParams(location.search).get('volver');location.href=back&&back.startsWith('/')&&!back.startsWith('//')?back:'cuenta.html';}catch(err){message('mensajeLogin',err.message);}});}
-function setupDatos(){const u=currentUser;for(const [id,key] of [['datosNombre','nombre'],['datosApellidos','apellidos'],['datosMatricula','matricula'],['datosCorreo','correo'],['datosFacultad','facultad']])if($(id))$(id).value=u[key]||'';$('formDatos').addEventListener('submit',async e=>{e.preventDefault();const pass=$('datosContrasena')?.value||'';if(pass!==($('datosConfirmar')?.value||''))return message('mensajeDatos','Las contraseñas no coinciden.');try{await send('/api/yo',{nombre:field('datosNombre'),apellidos:field('datosApellidos'),matricula:field('datosMatricula'),correo:field('datosCorreo'),facultad:field('datosFacultad'),contrasena:pass},'PUT');message('mensajeDatos','Datos actualizados.');await getUser();text('cuentaNombre',currentUser.nombre+' '+currentUser.apellidos);text('cuentaCorreo',currentUser.correo);text('cuentaFacultad',currentUser.facultad);if($('datosContrasena'))$('datosContrasena').value='';if($('datosConfirmar'))$('datosConfirmar').value='';}catch(err){message('mensajeDatos',err.message);}});}
-async function cargarAcceso(){try{const r=await api('/api/mi-acceso');text('codigoAcceso',r.activo?r.codigo:'------');text('estadoAcceso',r.activo?`${r.edificio} · Piso ${r.piso} · Casillero ${r.numero}. Código de demostración (no abre una cerradura física).`:r.mensaje);}catch(err){text('estadoAcceso',err.message);}}
-async function setupCuenta(){text('cuentaNombre',currentUser.nombre+' '+currentUser.apellidos);text('cuentaCorreo',currentUser.correo);text('cuentaFacultad',currentUser.facultad);if($('formDatos'))setupDatos();try{const r=await api('/api/rentas');const active=r.find(x=>x.estado==='activa'||x.estado==='pendiente_pago');if(active){text('cuentaCasillero',`${active.edificio} · Piso ${active.piso} · #${active.numero} (${active.estado})`);text('cuentaPlan',active.plan);}}catch{}await cargarAcceso();}
-let selectedLocker=null;
-async function setupCasilleros(){const faculty=$('facultadCasillero'),building=$('edificio'),floor=$('piso');if(currentUser.facultad&&Array.from(faculty.options).some(o=>o.value===currentUser.facultad))faculty.value=currentUser.facultad;
-const load=async()=>{selectedLocker=null;sessionStorage.removeItem('easyLockerCasilleroId');text('casilleroSeleccionado','Ninguno');const title=`${building.value} · Piso ${floor.value}`;text('tituloPiso',title);const container=$('filasCasilleros');container.replaceChildren();try{const rows=await api(`/api/casilleros?facultad=${encodeURIComponent(faculty.value)}&edificio=${encodeURIComponent(building.value)}&piso=${encodeURIComponent(floor.value)}`);if(!rows.length){container.textContent='No hay casilleros para esta ubicación.';return;}const columns=6;for(let i=0;i<rows.length;i+=columns){const row=document.createElement('div');row.className='fila-casilleros';const label=document.createElement('span');label.className='numero-fila';label.textContent=`Fila ${Math.floor(i/columns)+1}`;row.appendChild(label);rows.slice(i,i+columns).forEach(c=>{const b=document.createElement('button');b.type='button';b.className='casillero';b.innerHTML=`<span class="casillero-numero">${Number(c.numero)}</span><span class="casillero-puerta" aria-hidden="true"></span>`;b.setAttribute('aria-label',`Casillero ${c.numero}, ${c.estado}`);b.title=`Casillero ${c.numero}: ${c.estado}`;b.disabled=c.estado!=='disponible';if(b.disabled)b.classList.add('ocupado');b.addEventListener('click',()=>{container.querySelectorAll('.seleccionado').forEach(x=>x.classList.remove('seleccionado'));b.classList.add('seleccionado');selectedLocker=c;sessionStorage.setItem('easyLockerCasilleroId',String(c.id));text('casilleroSeleccionado',`${title} · Casillero ${c.numero}`);text('estadoAcceso','Casillero seleccionado. El código de demostración se habilita después de confirmar el pago.');});row.appendChild(b);});container.appendChild(row);}}catch(err){container.textContent=err.message;}};
-[faculty,building,floor].forEach(el=>el.addEventListener('change',load));$('continuarCasillero').addEventListener('click',e=>{if(!selectedLocker){e.preventDefault();text('casilleroSeleccionado','Primero selecciona un casillero disponible.');}});await load();await cargarAcceso();}
-function setupPlanes(){document.querySelectorAll('.boton-plan').forEach(btn=>btn.addEventListener('click',async()=>{const lockerId=Number(sessionStorage.getItem('easyLockerCasilleroId'));if(!lockerId)return message('mensajePlan','Primero selecciona un casillero en el mapa.');try{const plans=await api('/api/planes');const plan=plans.find(p=>p.nombre===btn.dataset.plan);if(!plan)throw new Error('Plan no disponible.');const rent=await send('/api/rentas',{casilleroId:lockerId,planId:plan.id});sessionStorage.setItem('easyLockerRentaId',String(rent.id));location.href='Pago.html';}catch(err){message('mensajePlan',err.message);}}));}
-async function setupPago(){const id=Number(sessionStorage.getItem('easyLockerRentaId'));try{const rents=await api('/api/rentas');const r=rents.find(x=>x.id===id&&x.estado==='pendiente_pago');if(!r){message('mensajePago','No hay reserva pendiente. Regresa a casilleros.');$('formPago').querySelector('button[type=submit]').disabled=true;return;}text('pagoPlan',r.plan);text('pagoPrecio',`$${Number(r.precio_total).toFixed(2)} MXN`);text('pagoUbicacion',`${r.facultad} · ${r.edificio} · Piso ${r.piso} · #${r.numero}`);$('formPago').addEventListener('submit',async e=>{e.preventDefault();try{const result=await send(`/api/rentas/${id}/pagar`,{});message('mensajePago',result.mensaje);sessionStorage.removeItem('easyLockerRentaId');setTimeout(()=>location.href='Historial.html',1100);}catch(err){message('mensajePago',err.message);}});}catch(err){message('mensajePago',err.message);}}
-async function setupHistorial(){try{const rents=await api('/api/rentas');text('cantidadRentas',rents.length);const latest=rents[0];text('rentaActual',latest?`${latest.plan} · ${latest.estado}`:'Sin renta');text('historialFacultad',latest?.facultad||'Sin seleccionar');const body=$('tablaHistorial');body.replaceChildren();if(!rents.length){const tr=document.createElement('tr');tr.innerHTML='<td colspan="5">Todavía no hay rentas.</td>';body.appendChild(tr);return;}rents.forEach(r=>{const tr=document.createElement('tr');[r.facultad,`${r.edificio}, piso ${r.piso}, #${r.numero}`,r.plan,r.estado].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td);});if(r.estado==='pendiente_pago'){const td=document.createElement('td');const btn=document.createElement('button');btn.type='button';btn.textContent='Cancelar reserva';btn.className='boton boton-secundario';btn.addEventListener('click',async()=>{try{await send(`/api/rentas/${r.id}/cancelar`,{});await setupHistorial();}catch(e){message('historialMensaje',e.message);}});td.appendChild(btn);tr.appendChild(td);}body.appendChild(tr);});}catch(err){$('tablaHistorial').textContent=err.message;}}
-async function setupAdmin(){try{const data=await api('/api/admin/resumen');text('adminResumen',`Casilleros: ${data.total} · Disponibles: ${data.disponibles} · Ocupados: ${data.ocupados} · Reservados: ${data.reservados} · Usuarios: ${data.usuarios} · Rentas: ${data.rentas}`);}catch(err){text('adminResumen',err.message);}}
+// Easy Locker: el frontend solo consume la API; nunca se conecta directamente a MongoDB.
+const $ = id => document.getElementById(id);
+const message = (id, value) => { const element = $(id); if (element) element.textContent = value; };
+const text = (id, value) => { if ($(id)) $(id).textContent = value ?? '—'; };
+const field = id => $(id)?.value?.trim() || '';
+const tokenKey = 'easyLockerToken';
+const urlPage = window.location.pathname.toLowerCase();
+const privatePages = [
+    '/cuenta.html', '/datos.html', '/historial.html', '/pago.html',
+    '/casilleros.html', '/planes.html', '/admin.html'
+];
+
+let currentUser = null;
+
+async function api(url, options = {}) {
+    const token = sessionStorage.getItem(tokenKey);
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (token) headers.Authorization = 'Bearer ' + token;
+
+    const response = await fetch(url, {
+        credentials: 'same-origin',
+        ...options,
+        headers
+    });
+    const data = await response.json().catch(() => ({ mensaje: 'Respuesta no válida del servidor.' }));
+
+    if (response.status === 401 && token) sessionStorage.removeItem(tokenKey);
+    if (!response.ok) throw new Error(data.mensaje || 'No se pudo completar la operación.');
+    return data;
+}
+
+const send = (url, data, method = 'POST') =>
+    api(url, { method, body: JSON.stringify(data) });
+
+async function getUser() {
+    try {
+        currentUser = await api('/api/yo');
+        return currentUser;
+    } catch {
+        currentUser = null;
+        return null;
+    }
+}
+
+function setupNav() {
+    const button = $('botonMenu');
+    const navigation = $('navegacion');
+    if (button && navigation) {
+        button.addEventListener('click', () => navigation.classList.toggle('abierto'));
+    }
+
+    const menu = navigation || document.querySelector('header');
+    if (!menu || $('navSesion')) return;
+
+    const link = document.createElement('a');
+    link.href = 'login.html';
+    link.id = 'navSesion';
+    link.textContent = 'Iniciar sesión';
+    menu.appendChild(link);
+
+    link.addEventListener('click', async event => {
+        if (!currentUser) return;
+        event.preventDefault();
+        try { await send('/api/logout', {}); } catch {}
+        sessionStorage.removeItem(tokenKey);
+        currentUser = null;
+        location.href = 'login.html';
+    });
+}
+
+async function init() {
+    setupNav();
+    const user = await getUser();
+    const navLink = $('navSesion');
+    if (navLink) navLink.textContent = user ? 'Cerrar sesión' : 'Iniciar sesión';
+
+    if (privatePages.includes(urlPage) && !user) {
+        location.href = 'login.html?volver=' + encodeURIComponent(location.pathname);
+        return;
+    }
+    if (urlPage === '/admin.html' && user.rol !== 'administrador') {
+        location.href = 'cuenta.html';
+        return;
+    }
+
+    if ($('formRegistro')) setupRegistro();
+    if ($('formLogin')) setupLogin();
+    if ($('cuentaNombre')) setupCuenta();
+    if ($('filasCasilleros')) setupCasilleros();
+    if (document.querySelector('.boton-plan')) setupPlanes();
+    if ($('formPago')) setupPago();
+    if ($('tablaHistorial')) setupHistorial();
+    if ($('adminResumen')) setupAdmin();
+}
+
+function setupRegistro() {
+    $('formRegistro').addEventListener('submit', async event => {
+        event.preventDefault();
+        const data = {
+            nombre: field('nombre'),
+            apellidos: field('apellidos'),
+            matricula: field('matricula'),
+            correo: field('correo'),
+            facultad: field('facultad'),
+            contrasena: $('contrasena').value
+        };
+        if (data.contrasena !== $('confirmar').value) {
+            return message('mensajeRegistro', 'Las contraseñas no coinciden.');
+        }
+        try {
+            const result = await send('/api/registro', data);
+            message('mensajeRegistro', result.mensaje);
+            setTimeout(() => location.href = 'login.html', 1000);
+        } catch (error) {
+            message('mensajeRegistro', error.message);
+        }
+    });
+}
+
+function setupLogin() {
+    $('formLogin').addEventListener('submit', async event => {
+        event.preventDefault();
+        try {
+            const result = await send('/api/login', {
+                correo: field('loginCorreo'),
+                contrasena: $('loginContrasena').value
+            });
+            sessionStorage.setItem(tokenKey, result.token);
+            message('mensajeLogin', '¡Bienvenido!');
+            const back = new URLSearchParams(location.search).get('volver');
+            location.href = back && back.startsWith('/') && !back.startsWith('//')
+                ? back
+                : 'cuenta.html';
+        } catch (error) {
+            message('mensajeLogin', error.message);
+        }
+    });
+}
+
+async function cargarAcceso() {
+    try {
+        const result = await api('/api/mi-acceso');
+        text('codigoAcceso', result.activo ? result.codigo : '------');
+        text(
+            'estadoAcceso',
+            result.activo
+                ? result.edificio + ' · Piso ' + result.piso + ' · Casillero ' + result.numero +
+                  '. Código de demostración (no abre una cerradura física).'
+                : result.mensaje
+        );
+    } catch (error) {
+        text('estadoAcceso', error.message);
+    }
+}
+
+function setupDatos() {
+    const user = currentUser;
+    for (const [id, key] of [
+        ['datosNombre', 'nombre'],
+        ['datosApellidos', 'apellidos'],
+        ['datosMatricula', 'matricula'],
+        ['datosCorreo', 'correo'],
+        ['datosFacultad', 'facultad']
+    ]) {
+        if ($(id)) $(id).value = user[key] || '';
+    }
+
+    $('formDatos').addEventListener('submit', async event => {
+        event.preventDefault();
+        const password = $('datosContrasena')?.value || '';
+        if (password !== ($('datosConfirmar')?.value || '')) {
+            return message('mensajeDatos', 'Las contraseñas no coinciden.');
+        }
+        try {
+            await send('/api/yo', {
+                nombre: field('datosNombre'),
+                apellidos: field('datosApellidos'),
+                matricula: field('datosMatricula'),
+                correo: field('datosCorreo'),
+                facultad: field('datosFacultad'),
+                contrasena: password
+            }, 'PUT');
+            message('mensajeDatos', 'Datos actualizados.');
+            await getUser();
+            text('cuentaNombre', currentUser.nombre + ' ' + currentUser.apellidos);
+            text('cuentaCorreo', currentUser.correo);
+            text('cuentaFacultad', currentUser.facultad);
+            if ($('datosContrasena')) $('datosContrasena').value = '';
+            if ($('datosConfirmar')) $('datosConfirmar').value = '';
+        } catch (error) {
+            message('mensajeDatos', error.message);
+        }
+    });
+}
+
+async function setupCuenta() {
+    text('cuentaNombre', currentUser.nombre + ' ' + currentUser.apellidos);
+    text('cuentaCorreo', currentUser.correo);
+    text('cuentaFacultad', currentUser.facultad);
+    if ($('formDatos')) setupDatos();
+
+    try {
+        const rents = await api('/api/rentas');
+        const active = rents.find(rent => ['activa', 'pendiente_pago'].includes(rent.estado));
+        if (active) {
+            text(
+                'cuentaCasillero',
+                active.edificio + ' · Piso ' + active.piso + ' · #' + active.numero + ' (' + active.estado + ')'
+            );
+            text('cuentaPlan', active.plan);
+        }
+    } catch {}
+    await cargarAcceso();
+}
+
+let selectedLocker = null;
+
+async function setupCasilleros() {
+    const faculty = $('facultadCasillero');
+    const building = $('edificio');
+    const floor = $('piso');
+
+    if (currentUser.facultad && Array.from(faculty.options).some(option => option.value === currentUser.facultad)) {
+        faculty.value = currentUser.facultad;
+    }
+
+    const load = async () => {
+        selectedLocker = null;
+        sessionStorage.removeItem('easyLockerCasilleroId');
+        text('casilleroSeleccionado', 'Ninguno');
+        const title = building.value + ' · Piso ' + floor.value;
+        text('tituloPiso', title);
+        const container = $('filasCasilleros');
+        container.replaceChildren();
+
+        try {
+            const query = '?facultad=' + encodeURIComponent(faculty.value) +
+                '&edificio=' + encodeURIComponent(building.value) +
+                '&piso=' + encodeURIComponent(floor.value);
+            const rows = await api('/api/casilleros' + query);
+            if (!rows.length) {
+                container.textContent = 'No hay casilleros para esta ubicación.';
+                return;
+            }
+
+            const columns = 6;
+            for (let index = 0; index < rows.length; index += columns) {
+                const row = document.createElement('div');
+                row.className = 'fila-casilleros';
+                const label = document.createElement('span');
+                label.className = 'numero-fila';
+                label.textContent = 'Fila ' + (Math.floor(index / columns) + 1);
+                row.appendChild(label);
+
+                rows.slice(index, index + columns).forEach(locker => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'casillero';
+                    button.innerHTML =
+                        '<span class="casillero-numero">' + Number(locker.numero) +
+                        '</span><span class="casillero-puerta" aria-hidden="true"></span>';
+                    button.setAttribute('aria-label', 'Casillero ' + locker.numero + ', ' + locker.estado);
+                    button.title = 'Casillero ' + locker.numero + ': ' + locker.estado;
+                    button.disabled = locker.estado !== 'disponible';
+                    if (button.disabled) button.classList.add('ocupado');
+
+                    button.addEventListener('click', () => {
+                        container.querySelectorAll('.seleccionado').forEach(element =>
+                            element.classList.remove('seleccionado')
+                        );
+                        button.classList.add('seleccionado');
+                        selectedLocker = locker;
+                        sessionStorage.setItem('easyLockerCasilleroId', String(locker.id));
+                        text('casilleroSeleccionado', title + ' · Casillero ' + locker.numero);
+                        text(
+                            'estadoAcceso',
+                            'Casillero seleccionado. El código de demostración se habilita después de confirmar el pago.'
+                        );
+                    });
+                    row.appendChild(button);
+                });
+                container.appendChild(row);
+            }
+        } catch (error) {
+            container.textContent = error.message;
+        }
+    };
+
+    [faculty, building, floor].forEach(element => element.addEventListener('change', load));
+    $('continuarCasillero').addEventListener('click', event => {
+        if (!selectedLocker) {
+            event.preventDefault();
+            text('casilleroSeleccionado', 'Primero selecciona un casillero disponible.');
+        }
+    });
+    await load();
+    await cargarAcceso();
+}
+
+function setupPlanes() {
+    document.querySelectorAll('.boton-plan').forEach(button => {
+        button.addEventListener('click', async () => {
+            const lockerId = sessionStorage.getItem('easyLockerCasilleroId');
+            if (!lockerId) return message('mensajePlan', 'Primero selecciona un casillero en el mapa.');
+
+            try {
+                const plans = await api('/api/planes');
+                const plan = plans.find(item => item.nombre === button.dataset.plan);
+                if (!plan) throw new Error('Plan no disponible.');
+                const rent = await send('/api/rentas', {
+                    casilleroId: lockerId,
+                    planId: plan.id
+                });
+                sessionStorage.setItem('easyLockerRentaId', String(rent.id));
+                location.href = 'Pago.html';
+            } catch (error) {
+                message('mensajePlan', error.message);
+            }
+        });
+    });
+}
+
+async function setupPago() {
+    const rentId = sessionStorage.getItem('easyLockerRentaId');
+    try {
+        const rents = await api('/api/rentas');
+        const rent = rents.find(item => item.id === rentId && item.estado === 'pendiente_pago');
+        if (!rent) {
+            message('mensajePago', 'No hay reserva pendiente. Regresa a casilleros.');
+            $('formPago').querySelector('button[type=submit]').disabled = true;
+            return;
+        }
+        text('pagoPlan', rent.plan);
+        text('pagoPrecio', '$' + Number(rent.precio_total).toFixed(2) + ' MXN');
+        text(
+            'pagoUbicacion',
+            rent.facultad + ' · ' + rent.edificio + ' · Piso ' + rent.piso + ' · #' + rent.numero
+        );
+
+        $('formPago').addEventListener('submit', async event => {
+            event.preventDefault();
+            try {
+                const result = await send('/api/rentas/' + rentId + '/pagar', {});
+                message('mensajePago', result.mensaje);
+                sessionStorage.removeItem('easyLockerRentaId');
+                setTimeout(() => location.href = 'Historial.html', 1100);
+            } catch (error) {
+                message('mensajePago', error.message);
+            }
+        });
+    } catch (error) {
+        message('mensajePago', error.message);
+    }
+}
+
+async function setupHistorial() {
+    try {
+        const rents = await api('/api/rentas');
+        text('cantidadRentas', rents.length);
+        const latest = rents[0];
+        text('rentaActual', latest ? latest.plan + ' · ' + latest.estado : 'Sin renta');
+        text('historialFacultad', latest?.facultad || 'Sin seleccionar');
+
+        const body = $('tablaHistorial');
+        body.replaceChildren();
+        if (!rents.length) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="5">Todavía no hay rentas.</td>';
+            body.appendChild(row);
+            return;
+        }
+
+        rents.forEach(rent => {
+            const row = document.createElement('tr');
+            [
+                rent.facultad,
+                rent.edificio + ', piso ' + rent.piso + ', #' + rent.numero,
+                rent.plan,
+                rent.estado
+            ].forEach(value => {
+                const cell = document.createElement('td');
+                cell.textContent = value;
+                row.appendChild(cell);
+            });
+
+            const actionCell = document.createElement('td');
+            if (rent.estado === 'pendiente_pago') {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = 'Cancelar reserva';
+                button.className = 'boton boton-secundario';
+                button.addEventListener('click', async () => {
+                    try {
+                        await send('/api/rentas/' + rent.id + '/cancelar', {});
+                        await setupHistorial();
+                    } catch (error) {
+                        message('historialMensaje', error.message);
+                    }
+                });
+                actionCell.appendChild(button);
+            } else {
+                actionCell.textContent = '—';
+            }
+            row.appendChild(actionCell);
+            body.appendChild(row);
+        });
+    } catch (error) {
+        $('tablaHistorial').textContent = error.message;
+    }
+}
+
+async function setupAdmin() {
+    try {
+        const data = await api('/api/admin/resumen');
+        text(
+            'adminResumen',
+            'Casilleros: ' + data.total +
+            ' · Disponibles: ' + data.disponibles +
+            ' · Ocupados: ' + data.ocupados +
+            ' · Reservados: ' + data.reservados +
+            ' · Usuarios: ' + data.usuarios +
+            ' · Rentas: ' + data.rentas +
+            ' · Ingresos: $' + Number(data.ingresos || 0).toFixed(2) + ' MXN'
+        );
+    } catch (error) {
+        text('adminResumen', error.message);
+    }
+}
+
 init();

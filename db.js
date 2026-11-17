@@ -1,3 +1,29 @@
 require('dotenv').config();
-const mysql=require('mysql2/promise');
-module.exports=mysql.createPool({host:process.env.DB_HOST||'localhost',port:Number(process.env.DB_PORT)||3306,user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD,database:process.env.DB_NAME||'easy_locker',waitForConnections:true,connectionLimit:10});
+const dns = require('dns');
+
+// Atlas usa registros SRV; permite definir resolutores alternativos si el DNS local los rechaza.
+const dnsServers = String(process.env.MONGODB_DNS_SERVERS || '')
+    .split(',')
+    .map(server => server.trim())
+    .filter(Boolean);
+if (dnsServers.length) dns.setServers(dnsServers);
+
+const mongoose = require('mongoose');
+
+const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/easy_locker';
+
+async function connectDB() {
+    mongoose.set('strictQuery', true);
+    await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: 10000,
+        maxPoolSize: 10
+    });
+    console.log('MongoDB conectado:', mongoose.connection.name);
+    return mongoose.connection;
+}
+
+async function disconnectDB() {
+    await mongoose.disconnect();
+}
+
+module.exports = { connectDB, disconnectDB, mongoUri };
